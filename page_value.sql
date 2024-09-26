@@ -5,9 +5,7 @@ WITH
     FORMAT_DATE('%Y%m%d',DATE_SUB(CURRENT_DATE(), INTERVAL 1 day)) AS end_date),
 
 
-
--- Pulling transaction timestamp and revenue for converted sessions   
-
+  -- Pulling transaction timestamp and revenue for converted sessions   
   event_values AS (
   SELECT
     CONCAT(user_pseudo_id,' - ',(SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id')) AS session_id,
@@ -26,9 +24,7 @@ WITH
     event_timestamp),
 
 
-
 -- Retrieving all pageviews and page from sessions
-
   pages AS (
   SELECT
     event_date,
@@ -46,12 +42,9 @@ WITH
   )
 
 
-
-
 -- Joining event value and page CTEs to determine revenue attribution
 -- Revenue attribution applies to pages visited before the transaction event 
 -- Left unaggregated to support dynamic data visualization, allowing users to choose to view page value by either page location or page title and date range
- 
   SELECT
     CAST(FORMAT_DATE('%Y-%m-%d',PARSE_DATE('%Y%m%d',event_date)) AS date) AS date,
     p.session_id,
