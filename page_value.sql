@@ -94,6 +94,7 @@ pageviews AS (
 -- Aggregating page revenue by page, session and date
 -- Each session_id represents a unique view for the corresponding page
 -- This format will be maintained for a dynamic dashboard view
+-- If a dynamic view is not needed proceed with calculating page value by page: SUM(page_revenue)/COUNT(DISTINCT session_id)
 SELECT
   CAST(FORMAT_DATE('%Y-%m-%d',PARSE_DATE('%Y%m%d',a.event_date)) AS date) AS date,
   a.session_id,
