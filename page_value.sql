@@ -2,76 +2,114 @@
    Google Reference:    https://support.google.com/analytics/answer/2695658 
 */
 
-WITH
-  dates AS (
-  SELECT
-    '20240301' AS start_date,
+
+
+WITH 
+dates as (
+  SELECT 
+    '20240301' as start_date,
+    -- The next line gets yesterday
     FORMAT_DATE('%Y%m%d',DATE_SUB(CURRENT_DATE(), INTERVAL 1 day)) AS end_date),
 
 
--- Pulling transaction timestamp and revenue for converted sessions 
--- ga_session_id is not unique to each user and needs to be combined with the user_pseudo_id to ensure it is truly unique
--- session_id will be used later to join page data
-  event_values AS (
+-- Pulling transaction timestamp and revenue for converted sessions
+-- Transaction_id isn't always necessary, but it helps identify pages viewed before specific transactions in sessions with multiple transactions and aids in query QA.
+  transactions AS (
   SELECT
     CONCAT(user_pseudo_id,' - ',(SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id')) AS session_id,
-    event_timestamp,
+    event_timestamp AS revenue_timestamp,
+    (SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'transaction_id') AS transaction_id,
     SUM(event_value_in_usd) AS event_value
   FROM
-    `project_id.analytics_table.events_*`
-  WHERE 
-    _TABLE_SUFFIX BETWEEN (SELECT start_date from dates) 
-    AND (SELECT end_date FROM dates) 
-    AND 
-    event_value_in_usd is not null
+    `project_id.table_id.events_*`
+  WHERE
+    _TABLE_SUFFIX BETWEEN (SELECT start_date FROM dates) AND (SELECT end_date FROM dates) 
+    AND event_value_in_usd IS NOT NULL
+    AND event_name = 'purchase'
   GROUP BY
     session_id,
     event_params,
     event_timestamp),
 
 
--- Retrieving all pages and timestamp of each pageview
-  pages AS (
-  SELECT
+-- Retrieving all pageviews and pages from sessions
+pageviews AS (
+  SELECT 
     event_date,
     CONCAT(user_pseudo_id,' - ',(SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id')) AS session_id,
-    event_timestamp,
+    event_timestamp AS page_timestamp,
     (SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_location') AS page_location,
     (SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_title') AS page_title,     
   FROM
-    `project_id.analytics_table.events_*`
+    `project_id.table_id.events_*`
   WHERE 
-    _TABLE_SUFFIX BETWEEN (SELECT start_date from dates) 
-    AND (SELECT end_date FROM dates) 
-    and 
-    event_name = 'page_view'
-  ),
+    _TABLE_SUFFIX BETWEEN (SELECT start_date FROM dates) AND (SELECT end_date FROM dates) 
+    AND event_name = 'page_view'),
 
 
--- Joining event value and page CTEs to determine revenue attribution
--- Revenue attribution applies to pages visited before the transaction event 
--- session_id is a unique view, as the calculation focuses on the user viewing the page once rather than counting all pageviews
--- To support dynamic data visualization, the final query should remain unaggregated, providing users the flexibility to aggregate by page location, page title, and select date ranges
+-- Filtering for only unique views
+-- Unique views refer to pages that were viewed at least once during a session
+  unique_views AS (
+  SELECT
+    DISTINCT event_date,
+    session_id,
+    page_location,
+    page_title
+  FROM
+    pageviews ),
+
+
+-- Joining trasactions and pageviews CTEs
+-- Assigning revenue to all pages (this is not actual attribution)
+-- Adding is_before_revenue_event column to identify pages views prior to transaction event
   page_event_value AS (
   SELECT
-    CAST(FORMAT_DATE('%Y-%m-%d',PARSE_DATE('%Y%m%d',event_date)) AS date) AS date,
-    p.session_id AS unique_views,
-    page_location,
+    event_date,
+    p.session_id,
+    page_timestamp,
     page_title,
-    CASE WHEN p.event_timestamp > e.event_timestamp THEN 0 ELSE event_value END AS page_revenue
-  FROM 
-    pages AS p  
+    transaction_id,
+    event_value,
+    (CASE WHEN (page_timestamp < revenue_timestamp) THEN TRUE ELSE FALSE END) AS is_before_revenue_event
+  FROM
+    pageviews AS p
   FULL OUTER JOIN
-    event_values AS e 
-  ON p.session_id = e.session_id)
+    transactions AS t
+  ON
+    p.session_id = t.session_id),
 
 
--- If dynamic visualiztion is not needed, use final query below
--- You can use either page_location or page_title for grouping purposes
+-- Filtering for pages prior to transaction event to make sure revenue attribution are only to those
+-- Using DISTINCT and removing page_timestamp to dedupe
+  pages_before_revenue_event AS (
+  SELECT
+    DISTINCT * EXCEPT(page_timestamp)
+  FROM
+    page_event_value
+  WHERE
+    is_before_revenue_event IS TRUE)
+
+
+-- Final query
+-- Aggregating page revenue by page, session and date
+-- Each session_id represents a unique view for the corresponding page
+-- This format will be maintained for a dynamic dashboard view
 SELECT
-  page_title,
-  SUM(page_revenue)/COUNT(DISTINCT unique_views) AS page_value
+  CAST(FORMAT_DATE('%Y-%m-%d',PARSE_DATE('%Y%m%d',a.event_date)) AS date) AS date,
+  a.session_id,
+  a.page_location,
+  a.page_title,
+  SUM(event_value) AS page_revenue
 FROM
-  page_event_value
+  unique_views AS a
+LEFT JOIN
+  pages_before_revenue_event AS b
+ON
+  a.event_date = b.event_date
+  AND a.session_id = b.session_id
+  AND a.page_title = b.page_title
 GROUP BY
-  page_title
+  1,
+  2,
+  3,
+  4
