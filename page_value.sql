@@ -38,7 +38,6 @@ pageviews AS (
     event_date,
     CONCAT(user_pseudo_id,' - ',(SELECT value.int_value FROM UNNEST(event_params) WHERE KEY = 'ga_session_id')) AS session_id,
     event_timestamp AS page_timestamp,
-    (SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_location') AS page_location,
     (SELECT value.string_value FROM UNNEST(event_params) WHERE KEY = 'page_title') AS page_title,     
   FROM
     `project_id.table_id.events_*`
@@ -53,7 +52,6 @@ pageviews AS (
   SELECT
     DISTINCT event_date,
     session_id,
-    page_location,
     page_title
   FROM
     pageviews ),
@@ -98,7 +96,6 @@ pageviews AS (
 SELECT
   CAST(FORMAT_DATE('%Y-%m-%d',PARSE_DATE('%Y%m%d',a.event_date)) AS date) AS date,
   a.session_id,
-  a.page_location,
   a.page_title,
   SUM(event_value) AS page_revenue
 FROM
